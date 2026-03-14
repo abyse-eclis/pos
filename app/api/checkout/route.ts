@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
+import { getOpenSession, getSessionStockSnapshot } from "../_lib/stockSession";
 
 // header row for every daily sheet
 const HEADERS = [
@@ -59,6 +60,13 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { items, total, received, change, staff, paymentMethod } = body;
 
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Cart is empty" },
+        { status: 400 },
+      );
+    }
+
 
     const serviceAccountAuth = new JWT({
       email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -71,6 +79,48 @@ export async function POST(req: Request) {
       serviceAccountAuth,
     );
     await doc.loadInfo();
+
+    const openSession = await getOpenSession(doc);
+    if (openSession) {
+      const stockSnapshot = await getSessionStockSnapshot(doc, openSession);
+      const productSheet = doc.sheetsByTitle["สินค้า"];
+      const productRows = productSheet ? await productSheet.getRows() : [];
+      const inventoryKeys = new Set<string>();
+
+      for (const row of productRows) {
+        const sku = String(row.get("รหัส SKU") || row.get("sku_code") || "").trim();
+        const name = String(row.get("ชื่อสินค้า") || row.get("name") || "").trim();
+        const isInventoryRaw = String(row.get("is_inventory") || "").trim().toUpperCase();
+        const isInventory =
+          isInventoryRaw === "TRUE" || isInventoryRaw === "1" || isInventoryRaw === "YES";
+
+        if (isInventory) {
+          if (sku) inventoryKeys.add(sku);
+          else if (name) inventoryKeys.add(name);
+        }
+      }
+
+      const requestedQtyByKey = new Map<string, number>();
+      for (const item of items) {
+        const key = String(item.sku_code || item.name || "").trim();
+        if (!key || !inventoryKeys.has(key)) continue;
+        requestedQtyByKey.set(key, (requestedQtyByKey.get(key) || 0) + (Number(item.qty) || 0));
+      }
+
+      for (const [key, requestedQty] of requestedQtyByKey.entries()) {
+        const availableQty = stockSnapshot.get(key)?.storefrontBalance || 0;
+        if (requestedQty > availableQty) {
+          const matchedItem = items.find((item: any) => (item.sku_code || item.name) === key);
+          return NextResponse.json(
+            {
+              success: false,
+              error: `สินค้า ${matchedItem?.name || key} มีหน้าร้านคงเหลือ ${Math.max(availableQty, 0)} ชิ้น ขาย ${requestedQty} ชิ้นไม่ได้`,
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
 
     const { sheet } = await getDailySheet(doc);
     const bill = billId();

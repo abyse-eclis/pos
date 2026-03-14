@@ -53,6 +53,11 @@ export interface StockMovementRecord {
   note: string;
 }
 
+export interface StockSnapshotItem {
+  warehouseBalance: number;
+  storefrontBalance: number;
+}
+
 export async function getOrCreateSheet(
   doc: GoogleSpreadsheet,
   title: string,
@@ -128,6 +133,63 @@ export function buildMovementId() {
 export function getSessionDateRange(session: StockSessionRecord) {
   const endDate = session.closed_at || getTodayDateStr();
   return enumerateDateStrings(session.started_at, endDate);
+}
+
+export async function getSessionStockSnapshot(
+  doc: GoogleSpreadsheet,
+  session: StockSessionRecord,
+) {
+  const allMovements = await getAllMovements(doc);
+  const sessionDates = getSessionDateRange(session);
+  const { soldBySku } = await getSalesTotalsForDates(doc, sessionDates);
+  const sessionStart = `${session.started_at}T00:00:00.000Z`;
+  const snapshot = new Map<string, StockSnapshotItem>();
+
+  const ensureKey = (key: string) => {
+    if (!snapshot.has(key)) {
+      snapshot.set(key, {
+        warehouseBalance: 0,
+        storefrontBalance: 0,
+      });
+    }
+    return snapshot.get(key)!;
+  };
+
+  for (const movement of allMovements) {
+    const key = movement.sku_code || movement.name;
+    if (!key) continue;
+
+    const isBeforeSession =
+      movement.timestamp < sessionStart && movement.session_id !== session.session_id;
+    const isInSession = movement.session_id === session.session_id;
+
+    if (!isBeforeSession && !isInSession) continue;
+
+    const item = ensureKey(key);
+
+    if (movement.movement_type === "receive_to_warehouse") {
+      item.warehouseBalance += movement.qty_piece;
+      continue;
+    }
+
+    if (movement.movement_type === "move_to_storefront") {
+      item.warehouseBalance -= movement.qty_piece;
+      item.storefrontBalance += movement.qty_piece;
+      continue;
+    }
+
+    if (movement.movement_type === "return_to_warehouse") {
+      item.warehouseBalance += movement.qty_piece;
+      item.storefrontBalance -= movement.qty_piece;
+    }
+  }
+
+  for (const [key, sold] of soldBySku.entries()) {
+    const item = ensureKey(key);
+    item.storefrontBalance -= sold.qty || 0;
+  }
+
+  return snapshot;
 }
 
 export async function getSalesTotalsForDates(

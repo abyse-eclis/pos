@@ -116,7 +116,10 @@ export default function POSPage() {
       });
 
       if (res.ok) setCheckoutDone(true);
-      else alert("เกิดข้อผิดพลาดในการบันทึกการขาย");
+      else {
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "เกิดข้อผิดพลาดในการบันทึกการขาย");
+      }
     } catch (error) {
       alert("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้");
     } finally {

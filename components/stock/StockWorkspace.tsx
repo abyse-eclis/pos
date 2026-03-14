@@ -195,11 +195,28 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
     stateSetter: React.Dispatch<React.SetStateAction<Record<string, string>>>,
   ) => {
     const qty = Number(qtyValue) || 0;
+    const overviewItem = overviewMap.get(product.sku_code || product.name);
     if (!sessionData.current) {
       alert("กรุณาเปิดรอบขายก่อน");
       return;
     }
     if (qty <= 0) return;
+
+    if (movementType === "move_to_storefront") {
+      const available = overviewItem?.warehouseBalance || 0;
+      if (qty > available) {
+        alert(`เบิกเกินคลังร้านไม่ได้ เหลือ ${available} ชิ้น`);
+        return;
+      }
+    }
+
+    if (movementType === "return_to_warehouse") {
+      const available = overviewItem?.storefrontBalance || 0;
+      if (qty > available) {
+        alert(`คืนเกินหน้าร้านไม่ได้ เหลือ ${available} ชิ้น`);
+        return;
+      }
+    }
 
     setSubmitting(true);
     try {

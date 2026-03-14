@@ -5,6 +5,7 @@ import {
   getAllMovements,
   getMovementSheet,
   getOpenSession,
+  getSessionStockSnapshot,
   rowToMovement,
   StockMovementType,
 } from "../_lib/stockSession";
@@ -79,6 +80,41 @@ export async function POST(req: Request) {
         { success: false, error: "No open stock session" },
         { status: 409 },
       );
+    }
+
+    if (!openSession || openSession.session_id !== activeSessionId) {
+      return NextResponse.json(
+        { success: false, error: "Stock session is not available for movement" },
+        { status: 409 },
+      );
+    }
+
+    if (movement_type === "move_to_storefront" || movement_type === "return_to_warehouse") {
+      const stockSnapshot = await getSessionStockSnapshot(doc, openSession);
+      const stockItem = stockSnapshot.get(sku_code || name) || {
+        warehouseBalance: 0,
+        storefrontBalance: 0,
+      };
+
+      if (movement_type === "move_to_storefront" && qty > stockItem.warehouseBalance) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `เบิกเกินคลังร้านได้สูงสุด ${stockItem.warehouseBalance} ชิ้น`,
+          },
+          { status: 409 },
+        );
+      }
+
+      if (movement_type === "return_to_warehouse" && qty > stockItem.storefrontBalance) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `คืนเกินหน้าร้านได้สูงสุด ${Math.max(stockItem.storefrontBalance, 0)} ชิ้น`,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const sheet = await getMovementSheet(doc);
