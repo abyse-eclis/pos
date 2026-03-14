@@ -1,101 +1,150 @@
 import { NextResponse } from "next/server";
-import { GoogleSpreadsheet } from "google-spreadsheet";
-import { JWT } from "google-auth-library";
+import { getSpreadsheet } from "../_lib/googleSheets";
+
+function parseBoolean(value: unknown, defaultValue = true) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) return defaultValue;
+  return normalized === "TRUE" || normalized === "1" || normalized === "YES";
+}
+
+function normalizeImagePath(imageRaw: string) {
+  const image = imageRaw.trim();
+  if (!image) return "";
+  if (!image.startsWith("http") && !image.startsWith("/")) {
+    return image.startsWith("image/") ? `/${image}` : `/image/${image}`;
+  }
+  return image;
+}
+
+function normalizeSku(raw: unknown) {
+  let skuCode = String(raw || "").trim();
+  if (skuCode && (skuCode.includes("E+") || skuCode.includes("e+"))) {
+    try {
+      skuCode = BigInt(Math.round(Number(skuCode))).toString();
+    } catch {
+      skuCode = "";
+    }
+  }
+  return skuCode;
+}
+
+function buildFallbackId(name: string, index: number) {
+  const nameHandle = name
+    .replace(/\s+/g, "_")
+    .replace(/[^\w\u0E00-\u0E7F]/g, "")
+    .slice(0, 20);
+  return `ITEM_${nameHandle || String(index + 1).padStart(3, "0")}`;
+}
+
+async function getProductsSheet() {
+  const doc = await getSpreadsheet();
+  const sheet = doc.sheetsByTitle["สินค้า"];
+  if (!sheet) {
+    throw new Error("ไม่พบ sheet 'สินค้า'");
+  }
+  return sheet;
+}
+
+async function ensureHeader(sheet: Awaited<ReturnType<typeof getProductsSheet>>, header: string) {
+  await sheet.loadHeaderRow();
+  if (!sheet.headerValues.includes(header)) {
+    await sheet.setHeaderRow([...sheet.headerValues, header]);
+  }
+}
 
 export async function GET() {
   try {
-    const serviceAccountAuth = new JWT({
-      email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
-
-    const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID!, serviceAccountAuth);
-    await doc.loadInfo();
-
-    const sheet = doc.sheetsByTitle["สินค้า"];
-    if (!sheet) {
-      return NextResponse.json({ success: false, error: "ไม่พบ sheet 'สินค้า'" }, { status: 404 });
-    }
-
+    const sheet = await getProductsSheet();
     const rows = await sheet.getRows();
 
-    const products = rows.map((row, index) => {
-      const skuRaw = row.get("รหัส SKU") || row.get("sku_code") || "";
-      const name = (row.get("ชื่อสินค้า") || row.get("name") || "").trim();
-      const price = Number(row.get("ราคาขาย (บาท)") || row.get("price")) || 0;
-      const cost = Number(row.get("ราคาทุน (บาท)") || row.get("cost")) || 0;
-      const category = (row.get("หมวดหมู่") || "").trim();
-      const imageRaw = (row.get("Path รูปภาพ") || row.get("image") || "").trim();
-      
-      // Multi-tier inventory fields
-      const consumableId = (row.get("ตัดวัสดุ") || "").trim();
-      const packsPerCrate = Number(row.get("จำนวนแพ็คต่อลัง")) || 0;
-      const piecesPerPack = Number(row.get("จำนวนชิ้นต่อแพ็ค") || row.get("จำนวนต่อหน่วยใหญ่")) || 0;
+    const products = rows
+      .map((row, index) => {
+        const skuRaw = row.get("รหัส SKU") || row.get("sku_code") || "";
+        const name = (row.get("ชื่อสินค้า") || row.get("name") || "").trim();
+        if (!name) return null;
 
-      // Read is_inventory directly from Excel
-      const isInventoryRaw = (row.get("is_inventory") || "").toString().trim().toUpperCase();
-      const isInventory = isInventoryRaw === "TRUE" || isInventoryRaw === "1" || isInventoryRaw === "YES";
+        const skuCode = normalizeSku(skuRaw) || buildFallbackId(name, index);
+        const price = Number(row.get("ราคาขาย (บาท)") || row.get("price")) || 0;
+        const cost = Number(row.get("ราคาทุน (บาท)") || row.get("cost")) || 0;
+        const category = (row.get("หมวดหมู่") || row.get("category") || "").trim();
+        const image = normalizeImagePath(String(row.get("Path รูปภาพ") || row.get("image") || ""));
+        const consumableId = (row.get("ตัดวัสดุ") || row.get("consumable_id") || "").trim();
+        const packsPerCrate = Number(row.get("จำนวนแพ็คต่อ ลัง") || row.get("จำนวนแพ็คต่อลัง") || row.get("packs_per_crate")) || 0;
+        const piecesPerPack = Number(row.get("จำนวนชิ้นต่อแพ็ค") || row.get("จำนวนต่อหน่วยใหญ่") || row.get("pieces_per_pack")) || 0;
+        const isInventory = parseBoolean(row.get("is_inventory"), false);
+        const isActive = parseBoolean(row.get("is_active"), true);
 
-      if (!name) return null;
-
-      let image = imageRaw;
-      if (image && !image.startsWith("http") && !image.startsWith("/") && !image.startsWith("image/")) {
-        image = `image/${image}`;
-      }
-
-      // Fix SKU stability: If no SKU, use name as fallback
-      let skuCode = String(skuRaw).trim();
-      if (skuCode && (skuCode.includes("E+") || skuCode.includes("e+"))) {
-        try {
-          skuCode = BigInt(Math.round(Number(skuCode))).toString();
-        } catch {
-          skuCode = "";
-        }
-      }
-
-      // If no SKU, use name-based ID instead of index-based
-      const nameHandle = name.replace(/\s+/g, "_").replace(/[^\w\u0E00-\u0E7F]/g, "").slice(0, 20);
-      const id = skuCode || `ITEM_${nameHandle || String(index + 1).padStart(3, "0")}`;
-
-      // Fallback mapping for items to consumables if Excel columns are missing
-      const fallbackMapping: Record<string, string> = {
-        "น้ำแข็งแก้วใหญ่": "แก้วใหญ่",
-        "น้ำแข็งแก้วเล็ก": "แก้วเล็ก",
-        "น้ำแข็งถุงใหญ่": "ถุงใหญ่",
-        "น้ำแข็งถุงเล็ก": "ถุงเล็ก",
-        "โค้ก 330มล": "แก้วใหญ่",
-        "เป๊ปซี่ 345มล": "แก้วใหญ่",
-        "สไปรท์ 330มล": "แก้วใหญ่",
-        "แฟนต้า 330มล น้ำเขียว": "แก้วใหญ่",
-        "แฟนต้า 330มล น้ำแดง": "แก้วใหญ่",
-        "แฟนต้า 330มล น้ำส้ม": "แก้วใหญ่",
-        "แฟนต้า 330มล องุ่นป๊อบ": "แก้วใหญ่",
-        "แก้วเล็ก": "แก้วเล็ก",
-        "แก้วใหญ่": "แก้วใหญ่",
-        "ถุงใหญ่": "ถุงใหญ่",
-        "ถุงเล็ก": "ถุงเล็ก",
-      };
-
-      const finalConsumableId = consumableId || fallbackMapping[name] || "";
-
-      return {
-        sku_code: id,
-        name,
-        price,
-        cost,
-        image: image || "",
-        category,
-        consumable_id: finalConsumableId,
-        packs_per_crate: packsPerCrate,
-        pieces_per_pack: piecesPerPack,
-        conversion_rate: piecesPerPack,
-        is_inventory: isInventory,
-      };
-    }).filter(Boolean);
+        return {
+          sku_code: skuCode,
+          name,
+          price,
+          cost,
+          image,
+          category,
+          is_active: isActive,
+          consumable_id: consumableId,
+          packs_per_crate: packsPerCrate,
+          pieces_per_pack: piecesPerPack,
+          conversion_rate: piecesPerPack,
+          is_inventory: isInventory,
+        };
+      })
+      .filter(Boolean);
 
     return NextResponse.json({ success: true, products });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "โหลดสินค้าไม่สำเร็จ";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = await request.json();
+    const skuCode = String(body.sku_code || "").trim();
+    const name = String(body.name || "").trim();
+    const category = String(body.category || "").trim();
+    const price = Number(body.price) || 0;
+    const cost = Number(body.cost) || 0;
+    const isActive = Boolean(body.is_active);
+
+    if (!skuCode) {
+      return NextResponse.json({ success: false, error: "ไม่พบรหัสสินค้า" }, { status: 400 });
+    }
+
+    if (!name) {
+      return NextResponse.json({ success: false, error: "กรุณาระบุชื่อสินค้า" }, { status: 400 });
+    }
+
+    const sheet = await getProductsSheet();
+    await ensureHeader(sheet, "is_active");
+    const rows = await sheet.getRows();
+
+    const targetRow = rows.find((row, index) => {
+      const rowName = String(row.get("ชื่อสินค้า") || row.get("name") || "").trim();
+      const rowSku =
+        normalizeSku(row.get("รหัส SKU") || row.get("sku_code")) || buildFallbackId(rowName, index);
+      return rowSku === skuCode;
+    });
+
+    if (!targetRow) {
+      return NextResponse.json({ success: false, error: "ไม่พบสินค้าที่ต้องการแก้ไข" }, { status: 404 });
+    }
+
+    targetRow.set("name", name);
+    targetRow.set("ชื่อสินค้า", name);
+    targetRow.set("category", category);
+    targetRow.set("หมวดหมู่", category);
+    targetRow.set("price", price);
+    targetRow.set("ราคาขาย (บาท)", price);
+    targetRow.set("cost", cost);
+    targetRow.set("ราคาทุน (บาท)", cost);
+    targetRow.set("is_active", isActive ? "TRUE" : "FALSE");
+    await targetRow.save();
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "บันทึกสินค้าไม่สำเร็จ";
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

@@ -70,7 +70,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </h3>
               <button
                 onClick={handleCloseCheckout}
-                className="w-8 h-8 sm:w-12 sm:h-12 rounded-full bg-white/[0.04] text-slate-500 hover:text-white transition-all text-sm sm:text-xl font-bold flex items-center justify-center"
+                className="w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-white/[0.04] text-slate-400 hover:text-white transition-all text-base sm:text-xl font-bold flex items-center justify-center"
               >
                 ✕
               </button>
@@ -84,12 +84,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {/* Total + Payment Method */}
               <div className="flex items-center justify-between gap-3 sm:block">
                 <div className="sm:rounded-[40px] sm:bg-linear-to-br sm:from-white/[0.04] sm:to-transparent sm:border-2 sm:border-white/[0.1] sm:p-8 lg:p-10 sm:text-center sm:shadow-2xl sm:mb-8">
-                  <p className="text-[9px] sm:text-xs font-black text-slate-500 uppercase tracking-widest sm:tracking-[0.3em] sm:mb-3">
+                  <p className="text-xs sm:text-sm font-black text-slate-400 uppercase tracking-[0.22em] sm:tracking-[0.3em] sm:mb-3">
                     ยอดรวม
                   </p>
                   <p className="text-2xl sm:text-5xl lg:text-7xl font-black text-white tabular-nums tracking-tighter">
                     {totalPrice.toLocaleString()}
-                    <span className="text-xs sm:text-xl lg:text-2xl ml-1 sm:ml-3 text-cyan-400">
+                    <span className="text-sm sm:text-xl lg:text-2xl ml-1 sm:ml-3 text-cyan-400">
                       ฿
                     </span>
                   </p>
@@ -98,7 +98,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <div className="flex gap-1 sm:gap-4 p-1 sm:p-2 bg-white/[0.03] rounded-xl sm:rounded-[32px] border sm:border-2 border-white/[0.06]">
                   <button
                     onClick={() => setPaymentMethod("cash")}
-                    className={`py-2 px-3 sm:py-5 sm:px-6 sm:flex-1 rounded-lg sm:rounded-[24px] text-xs sm:text-lg lg:text-xl font-black transition-all flex items-center justify-center gap-1 sm:gap-3 ${
+                    className={`py-2.5 px-3.5 sm:py-5 sm:px-6 sm:flex-1 rounded-lg sm:rounded-[24px] text-sm sm:text-lg lg:text-xl font-black transition-all flex items-center justify-center gap-1 sm:gap-3 ${
                       paymentMethod === "cash"
                         ? "bg-white text-black shadow-xl"
                         : "text-slate-500"
@@ -108,7 +108,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   </button>
                   <button
                     onClick={() => setPaymentMethod("transfer")}
-                    className={`py-2 px-3 sm:py-5 sm:px-6 sm:flex-1 rounded-lg sm:rounded-[24px] text-xs sm:text-lg lg:text-xl font-black transition-all flex items-center justify-center gap-1 sm:gap-3 ${
+                    className={`py-2.5 px-3.5 sm:py-5 sm:px-6 sm:flex-1 rounded-lg sm:rounded-[24px] text-sm sm:text-lg lg:text-xl font-black transition-all flex items-center justify-center gap-1 sm:gap-3 ${
                       paymentMethod === "transfer"
                         ? "bg-white text-black shadow-xl"
                         : "text-slate-500"
@@ -124,7 +124,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   {/* Amount display - compact 2-col */}
                   <div className="grid grid-cols-2 gap-2 sm:gap-6">
                     <div className="space-y-0.5 sm:space-y-4">
-                      <label className="text-[9px] sm:text-xs font-black text-slate-500 uppercase tracking-widest text-center block">
+                      <label className="text-xs sm:text-sm font-black text-slate-400 uppercase tracking-[0.22em] text-center block">
                         รับเงินมา
                       </label>
                       <div className="text-xl sm:text-4xl lg:text-5xl font-black text-emerald-400 tabular-nums bg-[#0d1117] border-2 border-emerald-500/20 rounded-xl sm:rounded-[32px] py-2 sm:py-6 lg:py-8 px-2 sm:px-4 min-h-[44px] sm:min-h-[100px] flex items-center justify-center shadow-inner break-all">
@@ -132,7 +132,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       </div>
                     </div>
                     <div className="space-y-0.5 sm:space-y-4">
-                      <label className="text-[9px] sm:text-xs font-black text-slate-500 uppercase tracking-widest text-center block">
+                      <label className="text-xs sm:text-sm font-black text-slate-400 uppercase tracking-[0.22em] text-center block">
                         เงินทอน
                       </label>
                       <div
@@ -158,7 +158,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         <button
                           key={amt}
                           onClick={() => setReceivedAmount(String(amt))}
-                          className="py-1.5 sm:py-4 rounded-lg sm:rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-black text-[11px] sm:text-base hover:bg-emerald-500/20 active:scale-90 transition-all"
+                          className="py-1.5 sm:py-4 rounded-lg sm:rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-black text-sm sm:text-base hover:bg-emerald-500/20 active:scale-90 transition-all"
                         >
                           {amt}
                         </button>
@@ -193,14 +193,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <div className="w-36 h-36 sm:w-56 sm:h-56 lg:w-64 lg:h-64 mx-auto bg-white rounded-2xl sm:rounded-[40px] flex items-center justify-center p-5 sm:p-8 shadow-2xl">
                     <div className="text-black text-center space-y-2">
                       <div className="text-2xl sm:text-4xl">📱</div>
-                      <p className="font-black text-sm sm:text-lg lg:text-xl italic leading-tight uppercase">
+                      <p className="font-black text-base sm:text-lg lg:text-xl italic leading-tight uppercase">
                         โอนเงินเข้าเครื่อง
                         <br />
                         SCAN QR
                       </p>
                     </div>
                   </div>
-                  <p className="text-slate-400 text-xs sm:text-base lg:text-lg font-bold leading-relaxed">
+                  <p className="text-slate-300 text-sm sm:text-base lg:text-lg font-bold leading-relaxed">
                     กรุณาตรวจสอบยอดโอนให้เรียบร้อย
                     <br />
                     ก่อนกดปุ่มยืนยันด้านล่าง
@@ -235,7 +235,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <h2 className="text-2xl sm:text-4xl lg:text-5xl font-black text-white italic">
                 ชำระเงินสำเร็จ!
               </h2>
-              <p className="text-slate-500 font-bold text-sm sm:text-lg lg:text-xl uppercase tracking-widest">
+              <p className="text-slate-400 font-bold text-base sm:text-lg lg:text-xl uppercase tracking-[0.22em]">
                 ยินดีด้วย! บันทึกยอดขายเรียบร้อย
               </p>
             </div>

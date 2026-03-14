@@ -6,6 +6,7 @@ const HEADERS = [
   "วันที่",
   "เงินทอนตั้งต้น",
   "ยอดขายเงินสด",
+  "ยอดขายโอน",
   "ยอดควรมี",
   "นับเงินจริง",
   "ส่วนต่าง",
@@ -56,6 +57,7 @@ export async function GET(req: Request) {
           date,
           starting_cash: Number(row.get("เงินทอนตั้งต้น")) || 0,
           cash_sales: Number(row.get("ยอดขายเงินสด")) || 0,
+          transfer_sales: Number(row.get("ยอดขายโอน")) || 0,
           expected_cash: Number(row.get("ยอดควรมี")) || 0,
           actual_cash: Number(row.get("นับเงินจริง")) || 0,
           difference: Number(row.get("ส่วนต่าง")) || 0,
@@ -69,6 +71,7 @@ export async function GET(req: Request) {
         date,
         starting_cash: 0,
         cash_sales: 0,
+        transfer_sales: 0,
         expected_cash: 0,
         actual_cash: 0,
         difference: 0,
@@ -82,7 +85,15 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { date, starting_cash, cash_sales, expected_cash, actual_cash, difference } = body;
+    const {
+      date,
+      starting_cash,
+      cash_sales,
+      transfer_sales,
+      expected_cash,
+      actual_cash,
+      difference,
+    } = body;
 
     if (!date) {
       return NextResponse.json({ success: false, error: "Missing date" }, { status: 400 });
@@ -105,6 +116,7 @@ export async function POST(req: Request) {
       "วันที่": date,
       "เงินทอนตั้งต้น": starting_cash || 0,
       "ยอดขายเงินสด": cash_sales || 0,
+      "ยอดขายโอน": transfer_sales || 0,
       "ยอดควรมี": expected_cash || 0,
       "นับเงินจริง": actual_cash || 0,
       "ส่วนต่าง": difference || 0,
