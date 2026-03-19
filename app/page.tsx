@@ -190,8 +190,8 @@ export default function POSPage() {
         </div>
       }
     >
-      <div className="flex min-h-[calc(100dvh-11rem)] flex-col gap-4 xl:flex-row">
-        <section className="min-h-0 flex-1 rounded-[32px] border border-white/[0.06] bg-[#0c1220] shadow-2xl shadow-black/30">
+      <div className="flex min-h-[calc(100dvh-11rem)] flex-col gap-4 xl:h-[calc(100dvh-11rem)] xl:flex-row xl:overflow-hidden">
+        <section className="grid min-h-0 flex-1 grid-rows-[auto_1fr] rounded-[32px] border border-white/[0.06] bg-[#0c1220] shadow-2xl shadow-black/30">
           <div className="border-b border-white/[0.05] px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -218,7 +218,7 @@ export default function POSPage() {
               </div>
             </div>
           </div>
-          <div className="h-full overflow-y-auto p-4 sm:p-5 lg:p-6" style={{ scrollbarWidth: "none" }}>
+          <div className="min-h-0 overflow-y-auto p-4 sm:p-5 lg:p-6" style={{ scrollbarWidth: "none" }}>
             {productsLoading ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                 {[...Array(12)].map((_, index) => (
@@ -244,8 +244,8 @@ export default function POSPage() {
           </div>
         </section>
 
-        <aside className="hidden w-[360px] shrink-0 xl:block 2xl:w-[400px]">
-          <div className="h-full min-h-[calc(100dvh-11rem)] overflow-hidden rounded-[32px] border border-white/[0.06] bg-[#0d1117] shadow-2xl shadow-black/30">
+        <aside className="hidden min-h-0 w-[360px] shrink-0 xl:block 2xl:w-[400px]">
+          <div className="h-full rounded-[32px] border border-white/[0.06] bg-[#0d1117] shadow-2xl shadow-black/30">
             <CartSidebar
               cart={cart}
               addToCart={addToCart}
@@ -286,7 +286,7 @@ export default function POSPage() {
             onClick={() => setShowMobileCart(false)}
           />
           <div
-            className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-hidden rounded-t-[36px] border-t border-white/10 bg-[#0b0f19] shadow-2xl"
+            className="absolute inset-x-0 bottom-0 max-h-[88dvh] rounded-t-[36px] border-t border-white/10 bg-[#0b0f19] shadow-2xl"
             style={{ animation: "slide-up .35s cubic-bezier(0.16, 1, 0.3, 1) both" }}
           >
             <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-white/10" />

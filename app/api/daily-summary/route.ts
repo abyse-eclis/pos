@@ -30,24 +30,12 @@ interface InventorySummaryRow {
   closing: number;
 }
 
-interface ProductInventoryMeta {
-  sku_code: string;
-  name: string;
-  pieces_per_pack: number;
-  packs_per_crate: number;
-  is_inventory: boolean;
-}
-
 const INVENTORY_HEADERS = [
   "วันที่",
   "รหัสสินค้า",
   "ชื่อสินค้า",
   "ยอดยกมา",
-  "เบิก_ชิ้น",
-  "เบิก_แพ็ค",
-  "เบิก_ลัง",
-  "แกะ_แพ็ค",
-  "แกะ_ลัง",
+  "เบิก",
   "นับจริง",
 ];
 
@@ -67,58 +55,13 @@ async function getInventorySheet(doc: GoogleSpreadsheet) {
       title: "สต๊อกรายวัน",
       headerValues: INVENTORY_HEADERS,
     });
+  } else {
+    await sheet.loadHeaderRow();
+    if (sheet.headerValues.join("|") !== INVENTORY_HEADERS.join("|")) {
+      await sheet.setHeaderRow(INVENTORY_HEADERS);
+    }
   }
   return sheet;
-}
-
-async function loadProductInventoryMeta(doc: GoogleSpreadsheet) {
-  const sheet = doc.sheetsByTitle["สินค้า"];
-  if (!sheet) return new Map<string, ProductInventoryMeta>();
-
-  const rows = await sheet.getRows();
-  const productMap = new Map<string, ProductInventoryMeta>();
-
-  for (const row of rows) {
-    const skuRaw = row.get("รหัส SKU") || row.get("sku_code") || "";
-    const name = (row.get("ชื่อสินค้า") || row.get("name") || "").trim();
-    if (!name) continue;
-
-    let skuCode = String(skuRaw).trim();
-    if (skuCode && (skuCode.includes("E+") || skuCode.includes("e+"))) {
-      try {
-        skuCode = BigInt(Math.round(Number(skuCode))).toString();
-      } catch {
-        skuCode = "";
-      }
-    }
-
-    const nameHandle = name
-      .replace(/\s+/g, "_")
-      .replace(/[^\w\u0E00-\u0E7F]/g, "")
-      .slice(0, 20);
-    const id = skuCode || `ITEM_${nameHandle || "000"}`;
-
-    const isInventoryRaw = (row.get("is_inventory") || "")
-      .toString()
-      .trim()
-      .toUpperCase();
-
-    productMap.set(id, {
-      sku_code: id,
-      name,
-      pieces_per_pack:
-        Number(row.get("จำนวนชิ้นต่อแพ็ค")) ||
-        Number(row.get("จำนวนต่อหน่วยใหญ่")) ||
-        0,
-      packs_per_crate: Number(row.get("จำนวนแพ็คต่อลัง")) || 0,
-      is_inventory:
-        isInventoryRaw === "TRUE" ||
-        isInventoryRaw === "1" ||
-        isInventoryRaw === "YES",
-    });
-  }
-
-  return productMap;
 }
 
 export async function GET(req: Request) {
@@ -144,7 +87,6 @@ export async function GET(req: Request) {
 
     const salesSheet = doc.sheetsByTitle[sheetTitle];
     const inventorySheet = await getInventorySheet(doc);
-    const productMap = await loadProductInventoryMeta(doc);
 
     const itemMap = new Map<string, SummaryItem>();
     const billMap = new Map<
@@ -244,72 +186,51 @@ export async function GET(req: Request) {
       };
 
       existing.start_bal += Number(row.get("ยอดยกมา")) || 0;
-      existing.withdraw += Number(row.get("เบิก_ชิ้น")) || 0;
-      existing.withdraw_pack += Number(row.get("เบิก_แพ็ค")) || 0;
-      existing.withdraw_crate += Number(row.get("เบิก_ลัง")) || 0;
-      existing.split_pack += Number(row.get("แกะ_แพ็ค")) || 0;
-      existing.split_crate += Number(row.get("แกะ_ลัง")) || 0;
+      existing.withdraw += Number(row.get("เบิก")) || 0;
       existing.closing += Number(row.get("นับจริง")) || 0;
 
       inventoryMap.set(key, existing);
     }
 
-    const soldMap = new Map(
-      items.map((item) => [item.sku_code || item.name, item.qty]),
-    );
+    const soldMap = new Map(items.map((item) => [item.sku_code || item.name, item.qty]));
 
     const stockItems = Array.from(inventoryMap.values())
       .map((item) => {
-        const productMeta =
-          productMap.get(item.sku_code) ||
-          Array.from(productMap.values()).find((product) => product.name === item.name);
-
-        const piecesInPack = productMeta?.pieces_per_pack || 0;
-        const packsInCrate = productMeta?.packs_per_crate || 0;
         const sold = soldMap.get(item.sku_code || item.name) || 0;
-        const readyToSellGain = item.withdraw + item.split_pack * piecesInPack;
-        const shouldRemain = item.start_bal + readyToSellGain - sold;
+        const shouldRemain = item.start_bal + item.withdraw - sold;
         const actual = item.closing || 0;
         const diff = actual - shouldRemain;
-        const remainCrates = item.withdraw_crate - item.split_crate;
-        const remainPacks =
-          item.withdraw_pack + item.split_crate * packsInCrate - item.split_pack;
 
         return {
           sku_code: item.sku_code,
           name: item.name,
           start_bal: item.start_bal,
           withdraw: item.withdraw,
-          withdraw_pack: item.withdraw_pack,
-          withdraw_crate: item.withdraw_crate,
-          split_pack: item.split_pack,
-          split_crate: item.split_crate,
+          withdraw_pack: 0,
+          withdraw_crate: 0,
+          split_pack: 0,
+          split_crate: 0,
           sold,
           shouldRemain,
           actual,
           diff,
-          remainPacks,
-          remainCrates,
-          isInventory: productMeta?.is_inventory ?? true,
+          remainPacks: 0,
+          remainCrates: 0,
         };
       })
       .filter(
         (item) =>
-          item.isInventory &&
-          (item.start_bal !== 0 ||
-            item.withdraw !== 0 ||
-            item.withdraw_pack !== 0 ||
-            item.withdraw_crate !== 0 ||
-            item.sold !== 0 ||
-            item.actual !== 0 ||
-            item.diff !== 0),
+          item.start_bal !== 0 ||
+          item.withdraw !== 0 ||
+          item.sold !== 0 ||
+          item.actual !== 0 ||
+          item.diff !== 0,
       )
       .sort((a, b) => {
         const diffGap = Math.abs(b.diff) - Math.abs(a.diff);
         if (diffGap !== 0) return diffGap;
         return b.sold - a.sold;
-      })
-      .map(({ isInventory, ...item }) => item);
+      });
 
     const stockTotals = stockItems.reduce(
       (acc, item) => {

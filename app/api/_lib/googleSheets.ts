@@ -39,6 +39,70 @@ export function enumerateDateStrings(startDate: string, endDate: string) {
   return dates;
 }
 
+export function repairMojibakeText(text: string) {
+  if (!text) return text;
+
+  try {
+    const repaired = Buffer.from(text, "latin1").toString("utf8");
+    if (repaired.includes("\uFFFD")) return text;
+    return repaired;
+  } catch {
+    return text;
+  }
+}
+
+export function toMojibakeText(text: string) {
+  if (!text) return text;
+
+  try {
+    return Buffer.from(text, "utf8").toString("latin1");
+  } catch {
+    return text;
+  }
+}
+
+export function buildTextCandidates(...values: string[]) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter(Boolean)
+        .flatMap((value) => {
+          const repaired = repairMojibakeText(value);
+          const mojibake = toMojibakeText(value);
+          return Array.from(
+            new Set(
+              [value, repaired, mojibake].filter(
+                (candidate) => Boolean(candidate) && candidate.length > 0,
+              ),
+            ),
+          );
+        }),
+    ),
+  );
+}
+
+export function getSheetByAnyTitle(
+  doc: GoogleSpreadsheet,
+  ...titles: string[]
+) {
+  for (const title of buildTextCandidates(...titles)) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return sheet;
+  }
+  return null;
+}
+
+export function getRowValue(row: any, ...keys: string[]) {
+  for (const key of buildTextCandidates(...keys)) {
+    const value = row.get(key);
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+  return "";
+}
+
 export async function getSpreadsheet() {
   const serviceAccountAuth = new JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,

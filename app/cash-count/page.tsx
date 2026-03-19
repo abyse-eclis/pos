@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 
 const DENOMINATIONS = [
-  { value: 1000, label: "1,000", type: "bill", accent: "text-purple-300" },
+  { value: 1000, label: "1,000", type: "bill", accent: "text-fuchsia-300" },
   { value: 500, label: "500", type: "bill", accent: "text-violet-300" },
-  { value: 100, label: "100", type: "bill", accent: "text-red-300" },
+  { value: 100, label: "100", type: "bill", accent: "text-rose-300" },
   { value: 50, label: "50", type: "bill", accent: "text-sky-300" },
   { value: 20, label: "20", type: "bill", accent: "text-emerald-300" },
   { value: 10, label: "10", type: "coin", accent: "text-amber-300" },
@@ -24,12 +24,26 @@ function getTodayDateStr() {
   return `${dd}-${mm}-${yyyy}`;
 }
 
+function toInputDate(dateStr: string) {
+  const [dd, mm, yyyy] = dateStr.split("-");
+  if (!dd || !mm || !yyyy) return "";
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function fromInputDate(dateStr: string) {
+  const [yyyy, mm, dd] = dateStr.split("-");
+  if (!dd || !mm || !yyyy) return getTodayDateStr();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
 function numericValue(value: string) {
   const cleaned = value.replace(/[^0-9]/g, "");
   return cleaned ? Number(cleaned) : 0;
 }
 
 export default function CashCountPage() {
+  const [selectedDate, setSelectedDate] = useState(getTodayDateStr());
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [startingCash, setStartingCash] = useState(0);
   const [cashSales, setCashSales] = useState(0);
   const [transferSales, setTransferSales] = useState(0);
@@ -39,20 +53,27 @@ export default function CashCountPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const today = getTodayDateStr();
-  const actualCash = DENOMINATIONS.reduce(
-    (sum, denom) => sum + (counts[denom.value] || 0) * denom.value,
-    0,
+  const actualCash = useMemo(
+    () =>
+      DENOMINATIONS.reduce(
+        (sum, denom) => sum + (counts[denom.value] || 0) * denom.value,
+        0,
+      ),
+    [counts],
   );
   const expectedCash = startingCash + cashSales;
   const difference = actualCash - expectedCash;
 
-  const loadData = async () => {
+  const loadData = async (date: string) => {
     setLoading(true);
+    setSaved(false);
+    setCounts({});
+
     try {
-      const [cashRes, summaryRes] = await Promise.all([
-        fetch(`/api/cash-count?date=${today}`),
-        fetch(`/api/daily-summary?date=${today}`),
+      const [cashRes, summaryRes, datesRes] = await Promise.all([
+        fetch(`/api/cash-count?date=${date}`),
+        fetch(`/api/daily-summary?date=${date}`),
+        fetch("/api/available-dates"),
       ]);
 
       let salesCash = 0;
@@ -66,6 +87,11 @@ export default function CashCountPage() {
       setCashSales(salesCash);
       setTransferSalesSuggested(salesTransfer);
       setTransferSales(salesTransfer);
+
+      if (datesRes.ok) {
+        const data = await datesRes.json();
+        setAvailableDates(data.dates || []);
+      }
 
       if (cashRes.ok) {
         const cashData = await cashRes.json();
@@ -84,8 +110,8 @@ export default function CashCountPage() {
   };
 
   useEffect(() => {
-    loadData();
-  }, [today]);
+    loadData(selectedDate);
+  }, [selectedDate]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -95,7 +121,7 @@ export default function CashCountPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          date: today,
+          date: selectedDate,
           starting_cash: startingCash,
           cash_sales: cashSales,
           transfer_sales: transferSales,
@@ -120,22 +146,63 @@ export default function CashCountPage() {
     setCounts((prev) => ({ ...prev, [value]: count }));
   };
 
+  const saveButton = (
+    <button
+      type="button"
+      onClick={handleSave}
+      disabled={saving || loading}
+      className="w-full rounded-2xl bg-linear-to-r from-amber-500 to-orange-500 px-5 py-3.5 text-base font-black text-white shadow-lg shadow-amber-500/20 transition active:scale-[0.98] disabled:opacity-40 sm:w-auto"
+    >
+      {saving ? "กำลังบันทึก..." : "บันทึกยอดเงิน"}
+    </button>
+  );
+
   return (
     <AppShell
       title="นับเงิน"
-      subtitle={`รายวัน • ${today}`}
-      actions={
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving || loading}
-          className="rounded-2xl bg-linear-to-r from-amber-500 to-orange-500 px-5 py-3.5 text-base font-black text-white shadow-lg shadow-amber-500/20 transition active:scale-[0.98] disabled:opacity-40"
-        >
-          {saving ? "กำลังบันทึก..." : "บันทึกยอดเงิน"}
-        </button>
-      }
+      subtitle={`รายวัน • ${selectedDate}`}
+      actions={<div className="hidden sm:block">{saveButton}</div>}
     >
-      <div className="space-y-5">
+      <div className="space-y-5 pb-24 sm:pb-0">
+        <section className="rounded-[32px] border border-white/[0.06] bg-white/[0.03] p-5 shadow-xl shadow-black/20">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
+                Cash Count Date
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-white sm:text-3xl">
+                เลือกวันที่นับเงิน
+              </h2>
+              <p className="mt-3 max-w-2xl text-base leading-7 text-slate-300">
+                เลือกวันเพื่อดูหรือบันทึกเงินทอนตั้งต้น ยอดขายเงินสด ยอดโอน และผลนับเงินจริงของวันนั้น
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px] lg:min-w-[460px]">
+              <select
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-white outline-none"
+              >
+                {[selectedDate, ...availableDates.filter((date) => date !== selectedDate)].map(
+                  (date) => (
+                    <option key={date} value={date}>
+                      {date}
+                    </option>
+                  ),
+                )}
+              </select>
+
+              <input
+                type="date"
+                value={toInputDate(selectedDate)}
+                onChange={(e) => setSelectedDate(fromInputDate(e.target.value))}
+                className="rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-white outline-none"
+              />
+            </div>
+          </div>
+        </section>
+
         {saved && (
           <div className="rounded-[28px] border border-emerald-500/20 bg-emerald-500/10 px-5 py-4 text-base font-bold text-emerald-100">
             บันทึกยอดเงินเรียบร้อยแล้ว
@@ -166,14 +233,15 @@ export default function CashCountPage() {
                     value={cashSales}
                     accent="text-emerald-300"
                   />
+
                   <div className="rounded-[24px] border border-cyan-500/15 bg-cyan-500/10 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
                         <p className="text-sm font-black uppercase tracking-[0.18em] text-cyan-200">
                           ยอดขายโอน
                         </p>
                         <p className="mt-2 text-sm leading-6 text-slate-300">
-                          กรอกจากยอดที่เช็กจากสลิปได้เอง ระบบจะมีค่ายอดขายโอนของวันนี้ให้ใช้เทียบ
+                          กรอกจากยอดที่เช็กจากสลิปได้เอง ระบบจะมีค่ายอดขายโอนของวันนั้นให้ใช้เทียบ
                         </p>
                       </div>
                       <input
@@ -181,16 +249,17 @@ export default function CashCountPage() {
                         inputMode="numeric"
                         value={transferSales === 0 ? "" : String(transferSales)}
                         onChange={(e) => setTransferSales(numericValue(e.target.value))}
-                        className="w-32 rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black text-white outline-none transition focus:border-cyan-500/50"
+                        className="w-full rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black text-white outline-none transition focus:border-cyan-500/50 sm:w-40"
                         placeholder="0"
                       />
                     </div>
-                    <div className="mt-4 flex items-center justify-between rounded-2xl border border-white/[0.05] bg-black/20 px-4 py-3 text-base">
-                      <span className="text-slate-300">ยอดโอนจากระบบขายวันนี้</span>
+
+                    <div className="mt-4 flex flex-col gap-2 rounded-2xl border border-white/[0.05] bg-black/20 px-4 py-3 text-base sm:flex-row sm:items-center sm:justify-between">
+                      <span className="text-slate-300">ยอดโอนจากระบบขายของวันนั้น</span>
                       <button
                         type="button"
                         onClick={() => setTransferSales(transferSalesSuggested)}
-                        className="font-black text-cyan-200 transition hover:text-cyan-100"
+                        className="text-left font-black text-cyan-200 transition hover:text-cyan-100 sm:text-right"
                       >
                         ใช้ {transferSalesSuggested.toLocaleString()} ฿
                       </button>
@@ -219,17 +288,20 @@ export default function CashCountPage() {
             </div>
 
             <section className="rounded-[32px] border border-white/[0.06] bg-white/[0.03] p-5 shadow-xl shadow-black/20">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
                     นับเงินจริง
                   </p>
-                  <h2 className="mt-2 text-2xl font-black text-white">กรอกจำนวนธนบัตรและเหรียญ</h2>
+                  <h2 className="mt-2 text-2xl font-black text-white">
+                    กรอกจำนวนธนบัตรและเหรียญ
+                  </h2>
                 </div>
                 <p className="text-xl font-black text-white">
                   {actualCash.toLocaleString()} <span className="text-base text-slate-400">฿</span>
                 </p>
               </div>
+
               <div className="mt-5 grid gap-4 lg:grid-cols-2">
                 <div className="space-y-3">
                   <p className="text-sm font-black uppercase tracking-[0.18em] text-slate-400">
@@ -244,6 +316,7 @@ export default function CashCountPage() {
                     />
                   ))}
                 </div>
+
                 <div className="space-y-3">
                   <p className="text-sm font-black uppercase tracking-[0.18em] text-slate-400">
                     เหรียญ
@@ -261,6 +334,10 @@ export default function CashCountPage() {
             </section>
           </>
         )}
+
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.08] bg-[#0b0f19]/95 px-4 py-3 backdrop-blur-2xl sm:hidden">
+          {saveButton}
+        </div>
       </div>
     </AppShell>
   );
@@ -281,7 +358,7 @@ function StatField({
 }) {
   return (
     <div className="rounded-[24px] border border-white/[0.05] bg-black/20 p-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-500">
           {label}
         </p>
@@ -291,7 +368,7 @@ function StatField({
             inputMode="numeric"
             value={value === 0 ? "" : String(value)}
             onChange={(e) => onChange?.(e.target.value)}
-            className={`w-32 rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black outline-none transition focus:border-white/20 ${accent}`}
+            className={`w-full rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black outline-none transition focus:border-white/20 ${accent} sm:w-40`}
             placeholder="0"
           />
         ) : (
@@ -341,21 +418,25 @@ function DenomRow({
   const total = count * denom.value;
 
   return (
-    <div className="flex items-center gap-3 rounded-[24px] border border-white/[0.05] bg-black/20 px-4 py-3">
-      <div className={`w-16 text-center text-lg font-black ${denom.accent}`}>{denom.label}</div>
-      <span className="text-slate-600">×</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={count === 0 ? "" : String(count)}
-        onChange={(e) => onChange(numericValue(e.target.value))}
-        className="w-20 rounded-2xl border border-white/[0.08] bg-[#0d1117] px-3 py-2 text-center text-lg font-black text-white outline-none transition focus:border-amber-500/40"
-        placeholder="0"
-      />
-      <span className="text-slate-600">=</span>
-      <div className="ml-auto text-right">
-        <p className="text-sm text-slate-400">รวม</p>
-        <p className="text-lg font-black text-white">{total.toLocaleString()}</p>
+    <div className="rounded-[24px] border border-white/[0.05] bg-black/20 px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className={`w-16 text-center text-lg font-black ${denom.accent}`}>
+          {denom.label}
+        </div>
+        <span className="text-slate-600">×</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={count === 0 ? "" : String(count)}
+          onChange={(e) => onChange(numericValue(e.target.value))}
+          className="w-20 rounded-2xl border border-white/[0.08] bg-[#0d1117] px-3 py-2 text-center text-lg font-black text-white outline-none transition focus:border-amber-500/40"
+          placeholder="0"
+        />
+        <span className="text-slate-600">=</span>
+        <div className="ml-auto text-right">
+          <p className="text-sm text-slate-400">รวม</p>
+          <p className="text-lg font-black text-white">{total.toLocaleString()}</p>
+        </div>
       </div>
     </div>
   );

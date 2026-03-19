@@ -6,6 +6,7 @@ import {
   StockMovement,
   StockOverviewData,
   StockOverviewItem,
+  StockSessionSummaryItem,
   StockSession,
 } from "../PosTypes";
 
@@ -80,6 +81,7 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
     current: null,
     sessions: [],
   });
+  const [selectedComparisonSessionId, setSelectedComparisonSessionId] = useState("");
   const [overview, setOverview] = useState<StockOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -125,10 +127,14 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
   const loadData = async () => {
     setLoading(true);
     try {
+      const overviewUrl =
+        mode === "comparison" && selectedComparisonSessionId
+          ? `/api/stock-overview?session_id=${encodeURIComponent(selectedComparisonSessionId)}`
+          : "/api/stock-overview";
       const [productsRes, sessionsRes, overviewRes] = await Promise.all([
         fetch("/api/products"),
         fetch("/api/stock-session"),
-        fetch("/api/stock-overview"),
+        fetch(overviewUrl),
       ]);
 
       if (productsRes.ok) {
@@ -138,9 +144,17 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
 
       if (sessionsRes.ok) {
         const data = await sessionsRes.json();
+        const current = data.current || null;
+        const sessions = data.sessions || [];
         setSessionData({
-          current: data.current || null,
-          sessions: data.sessions || [],
+          current,
+          sessions,
+        });
+        setSelectedComparisonSessionId((prev) => {
+          if (prev && sessions.some((session: StockSession) => session.session_id === prev)) {
+            return prev;
+          }
+          return current?.session_id || sessions[0]?.session_id || "";
         });
       }
 
@@ -157,9 +171,19 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
     }
   };
 
+  const loadDataPreserveScroll = async () => {
+    const currentScrollY = typeof window !== "undefined" ? window.scrollY : 0;
+    await loadData();
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: currentScrollY });
+      });
+    }
+  };
+
   useEffect(() => {
     loadData();
-  }, []);
+  }, [mode, selectedComparisonSessionId]);
 
   const updateQtyInput = (skuCode: string, value: string) => {
     setQtyInputs((prev) => ({ ...prev, [skuCode]: numericValue(value) }));
@@ -167,6 +191,141 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
 
   const updateCountInput = (skuCode: string, value: string) => {
     setCountInputs((prev) => ({ ...prev, [skuCode]: numericValue(value) }));
+  };
+
+  const saveBatchMovements = async (
+    movements: Array<{
+      sku_code: string;
+      name: string;
+      movement_type: StockMovement["movement_type"];
+      qty_piece: number;
+    }>,
+    clearInputs: () => void,
+  ) => {
+    if (!sessionData.current) {
+      alert("กรุณาเปิดรอบขายก่อน");
+      return;
+    }
+
+    if (movements.length === 0) {
+      alert("ยังไม่มีรายการให้บันทึก");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/stock-movements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          movements: movements.map((movement) => ({
+            ...movement,
+            session_id: sessionData.current?.session_id,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "บันทึกความเคลื่อนไหวไม่สำเร็จ");
+        return;
+      }
+
+      clearInputs();
+      await loadDataPreserveScroll();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const saveMovementDrafts = async (
+    movementType: "receive_to_warehouse" | "move_to_storefront" | "return_to_warehouse",
+  ) => {
+    const drafts = inventoryProducts
+      .map((product) => ({
+        product,
+        qty: Number(qtyInputs[product.sku_code] || 0),
+      }))
+      .filter((item) => item.qty > 0);
+
+    if (drafts.length === 0) {
+      alert("ยังไม่มีจำนวนที่กรอก");
+      return;
+    }
+
+    for (const draft of drafts) {
+      const overviewItem = overviewMap.get(draft.product.sku_code || draft.product.name);
+      if (movementType === "move_to_storefront") {
+        const available = overviewItem?.warehouseBalance || 0;
+        if (draft.qty > available) {
+          alert(`เบิกเกินคลังร้านไม่ได้ เหลือ ${available} ชิ้น: ${draft.product.name}`);
+          return;
+        }
+      }
+
+      if (movementType === "return_to_warehouse") {
+        const available = overviewItem?.storefrontBalance || 0;
+        if (draft.qty > available) {
+          alert(`คืนเกินหน้าร้านไม่ได้ เหลือ ${available} ชิ้น: ${draft.product.name}`);
+          return;
+        }
+      }
+    }
+
+    await saveBatchMovements(
+      drafts.map(({ product, qty }) => ({
+        sku_code: product.sku_code,
+        name: product.name,
+        movement_type: movementType,
+        qty_piece: qty,
+      })),
+      () => setQtyInputs({}),
+    );
+  };
+
+  const saveCloseoutDrafts = async () => {
+    const countDrafts = inventoryProducts
+      .map((product) => ({
+        product,
+        qty: Number(countInputs[product.sku_code] || 0),
+      }))
+      .filter((item) => item.qty > 0)
+      .map(({ product, qty }) => ({
+        sku_code: product.sku_code,
+        name: product.name,
+        movement_type: "storefront_count" as const,
+        qty_piece: qty,
+      }));
+
+    const returnDrafts = inventoryProducts
+      .map((product) => ({
+        product,
+        qty: Number(qtyInputs[product.sku_code] || 0),
+      }))
+      .filter((item) => item.qty > 0);
+
+    for (const draft of returnDrafts) {
+      const available = overviewMap.get(draft.product.sku_code || draft.product.name)?.storefrontBalance || 0;
+      if (draft.qty > available) {
+        alert(`คืนเกินหน้าร้านไม่ได้ เหลือ ${available} ชิ้น: ${draft.product.name}`);
+        return;
+      }
+    }
+
+    const movements = [
+      ...countDrafts,
+      ...returnDrafts.map(({ product, qty }) => ({
+        sku_code: product.sku_code,
+        name: product.name,
+        movement_type: "return_to_warehouse" as const,
+        qty_piece: qty,
+      })),
+    ];
+
+    await saveBatchMovements(movements, () => {
+      setCountInputs({});
+      setQtyInputs({});
+    });
   };
 
   const createSession = async () => {
@@ -182,60 +341,6 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
         const data = await res.json();
         alert(data.error || "เปิดรอบขายไม่สำเร็จ");
       }
-      await loadData();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const addMovement = async (
-    product: Product,
-    movementType: StockMovement["movement_type"],
-    qtyValue: string,
-    stateSetter: React.Dispatch<React.SetStateAction<Record<string, string>>>,
-  ) => {
-    const qty = Number(qtyValue) || 0;
-    const overviewItem = overviewMap.get(product.sku_code || product.name);
-    if (!sessionData.current) {
-      alert("กรุณาเปิดรอบขายก่อน");
-      return;
-    }
-    if (qty <= 0) return;
-
-    if (movementType === "move_to_storefront") {
-      const available = overviewItem?.warehouseBalance || 0;
-      if (qty > available) {
-        alert(`เบิกเกินคลังร้านไม่ได้ เหลือ ${available} ชิ้น`);
-        return;
-      }
-    }
-
-    if (movementType === "return_to_warehouse") {
-      const available = overviewItem?.storefrontBalance || 0;
-      if (qty > available) {
-        alert(`คืนเกินหน้าร้านไม่ได้ เหลือ ${available} ชิ้น`);
-        return;
-      }
-    }
-
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/stock-movements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sessionData.current.session_id,
-          sku_code: product.sku_code,
-          name: product.name,
-          movement_type: movementType,
-          qty_piece: qty,
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || "บันทึกความเคลื่อนไหวไม่สำเร็จ");
-      }
-      stateSetter((prev) => ({ ...prev, [product.sku_code]: "" }));
       await loadData();
     } finally {
       setSubmitting(false);
@@ -362,61 +467,84 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
     balanceSelector: (overviewItem: StockOverviewItem | undefined) => number,
     label: string,
     buttonLabel: string,
+    secondaryBalance?: {
+      label: string;
+      selector: (overviewItem: StockOverviewItem | undefined) => number;
+    },
   ) => (
-    <div className="grid gap-3 xl:grid-cols-2">
-      {inventoryProducts.map((product) => {
-        const item = overviewMap.get(product.sku_code || product.name);
-        const qty = qtyInputs[product.sku_code] || "";
-        return (
-          <div
-            key={product.sku_code}
-            className="rounded-[28px] border border-white/[0.06] bg-white/[0.03] p-4 shadow-xl shadow-black/20"
-          >
-            <div className="flex flex-col gap-3 sm:gap-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-white/[0.08] bg-[#0d1117] p-2">
-                  <img
-                    src={product.image || "/image/empty.jpg"}
-                    alt={product.name}
-                    className="h-full w-full object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = "/image/empty.jpg";
-                    }}
-                  />
+    <div className="space-y-4">
+      <div className="grid gap-3 xl:grid-cols-2">
+        {inventoryProducts.map((product) => {
+          const item = overviewMap.get(product.sku_code || product.name);
+          const qty = qtyInputs[product.sku_code] || "";
+          return (
+            <div
+              key={product.sku_code}
+              className="rounded-[28px] border border-white/[0.06] bg-white/[0.03] p-4 shadow-xl shadow-black/20"
+            >
+              <div className="flex flex-col gap-3 sm:gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-white/[0.08] bg-[#0d1117] p-2">
+                    <img
+                      src={product.image || "/image/empty.jpg"}
+                      alt={product.name}
+                      className="h-full w-full object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = "/image/empty.jpg";
+                      }}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-base font-black leading-tight text-white sm:text-lg">{product.name}</p>
+                    <p className="mt-1 break-all text-sm font-mono text-slate-400">{product.sku_code}</p>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-base font-black leading-tight text-white sm:text-lg">{product.name}</p>
-                  <p className="mt-1 break-all text-sm font-mono text-slate-400">{product.sku_code}</p>
+                <div className="rounded-2xl border border-white/[0.08] bg-black/20 px-3 py-3">
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p>
+                      <p className="mt-1 text-xl font-black tabular-nums text-white sm:text-2xl">
+                        {balanceSelector(item).toLocaleString()}
+                      </p>
+                    </div>
+                    {secondaryBalance ? (
+                      <div className="min-w-0 text-right">
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                          {secondaryBalance.label}
+                        </p>
+                        <p className="mt-1 text-base font-black tabular-nums text-cyan-300 sm:text-lg">
+                          {secondaryBalance.selector(item).toLocaleString()}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-              <div className="rounded-2xl border border-white/[0.08] bg-black/20 px-3 py-3 text-left sm:text-right">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p>
-                <p className="mt-1 text-xl font-black tabular-nums text-white sm:text-2xl">
-                  {balanceSelector(item).toLocaleString()}
-                </p>
+              <div className="mt-4">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={qty}
+                  onChange={(e) => updateQtyInput(product.sku_code, e.target.value)}
+                  className="w-full rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black text-white outline-none transition focus:border-cyan-500/50"
+                  placeholder="0"
+                />
               </div>
             </div>
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={qty}
-                onChange={(e) => updateQtyInput(product.sku_code, e.target.value)}
-                className="w-full rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black text-white outline-none transition focus:border-cyan-500/50"
-                placeholder="0"
-              />
-              <button
-                type="button"
-                onClick={() => addMovement(product, movementType, qty, setQtyInputs)}
-                disabled={submitting || !sessionData.current}
-                className="rounded-2xl bg-linear-to-r from-cyan-500 to-blue-500 px-5 py-3.5 text-base font-black text-white shadow-lg shadow-cyan-500/20 transition active:scale-[0.98] disabled:opacity-40"
-              >
-                {buttonLabel}
-              </button>
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => saveMovementDrafts(movementType)}
+          disabled={submitting || !sessionData.current}
+          className="rounded-2xl bg-linear-to-r from-cyan-500 to-blue-500 px-5 py-3.5 text-base font-black text-white shadow-lg shadow-cyan-500/20 transition active:scale-[0.98] disabled:opacity-40"
+        >
+          {submitting ? "กำลังบันทึก..." : buttonLabel}
+        </button>
+      </div>
     </div>
   );
 
@@ -559,21 +687,6 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
                     className="mt-3 w-full rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black text-white outline-none transition focus:border-emerald-500/50"
                     placeholder="0"
                   />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      addMovement(
-                        product,
-                        "storefront_count",
-                        countValue,
-                        setCountInputs,
-                      )
-                    }
-                    disabled={submitting || !sessionData.current}
-                    className="mt-3 w-full rounded-2xl bg-emerald-500/15 px-4 py-3.5 text-base font-black text-emerald-200 transition active:scale-[0.98] disabled:opacity-40"
-                  >
-                    บันทึกยอดนับ
-                  </button>
                 </div>
 
                 <div className="rounded-2xl border border-white/[0.05] bg-black/20 p-3">
@@ -586,21 +699,6 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
                     className="mt-3 w-full rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-center text-xl font-black text-white outline-none transition focus:border-violet-500/50"
                     placeholder="0"
                   />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      addMovement(
-                        product,
-                        "return_to_warehouse",
-                        returnValue,
-                        setQtyInputs,
-                      )
-                    }
-                    disabled={submitting || !sessionData.current}
-                    className="mt-3 w-full rounded-2xl bg-violet-500/15 px-4 py-3.5 text-base font-black text-violet-200 transition active:scale-[0.98] disabled:opacity-40"
-                  >
-                    คืนกลับคลัง
-                  </button>
                 </div>
               </div>
 
@@ -615,7 +713,15 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
         })}
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={saveCloseoutDrafts}
+          disabled={submitting || !sessionData.current}
+          className="rounded-2xl bg-white/[0.08] px-5 py-3.5 text-base font-black text-white transition active:scale-[0.98] disabled:opacity-40"
+        >
+          บันทึกทั้งหมด
+        </button>
         <button
           type="button"
           onClick={closeSession}
@@ -624,6 +730,135 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
         >
           ปิดรอบขาย
         </button>
+      </div>
+    </div>
+  );
+
+  const renderSessionSummaryComparison = () => (
+    <div className="space-y-4">
+      <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.03] p-4 shadow-lg shadow-black/20">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
+              รอบที่กำลังเปรียบเทียบ
+            </p>
+            <p className="mt-2 text-lg font-black text-white">
+              {overview?.session?.label || "ยังไม่มีรอบขาย"}
+            </p>
+            <p className="mt-1 text-sm text-slate-400">
+              {overview?.session
+                ? `${overview.session.started_at}${overview.session.closed_at ? ` - ${overview.session.closed_at}` : " - กำลังเปิดรอบ"}`
+                : "เลือกดูสรุปตามรอบการขายได้จากรายการด้านขวา"}
+            </p>
+          </div>
+          <label className="block">
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+              เลือกรอบขาย
+            </span>
+            <select
+              value={selectedComparisonSessionId}
+              onChange={(e) => setSelectedComparisonSessionId(e.target.value)}
+              className="min-w-[260px] rounded-2xl border border-white/[0.08] bg-[#0d1117] px-4 py-3 text-sm font-bold text-white outline-none transition focus:border-violet-500/50"
+            >
+              {sessionData.sessions.map((session) => (
+                <option key={session.session_id} value={session.session_id}>
+                  {session.label || session.session_id} ({session.started_at}
+                  {session.closed_at ? ` - ${session.closed_at}` : ""})
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[
+          {
+            label: "เบิกทั้งรอบ",
+            value: overview?.sessionSummaryTotals.totalWithdrawn || 0,
+            accent: "text-cyan-300",
+          },
+          {
+            label: "ขายทั้งรอบ",
+            value: overview?.sessionSummaryTotals.totalSold || 0,
+            accent: "text-amber-300",
+          },
+          {
+            label: "ควรเหลือ",
+            value: overview?.sessionSummaryTotals.totalExpected || 0,
+            accent: "text-white",
+          },
+          {
+            label: "นับจริง",
+            value: overview?.sessionSummaryTotals.totalCounted || 0,
+            accent: "text-emerald-300",
+          },
+          {
+            label: "ส่วนต่าง",
+            value: overview?.sessionSummaryTotals.totalDiff || 0,
+            accent:
+              (overview?.sessionSummaryTotals.totalDiff || 0) >= 0
+                ? "text-violet-300"
+                : "text-rose-300",
+          },
+        ].map((metric) => (
+          <div
+            key={metric.label}
+            className="rounded-[24px] border border-white/[0.06] bg-white/[0.03] p-4 shadow-lg shadow-black/20"
+          >
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
+              {metric.label}
+            </p>
+            <p className={`mt-3 text-3xl sm:text-4xl font-black tabular-nums ${metric.accent}`}>
+              {metric.value.toLocaleString()}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-hidden rounded-[32px] border border-white/[0.06] bg-white/[0.03] shadow-2xl shadow-black/20">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left">
+            <thead className="bg-[#0d1117] text-xs uppercase tracking-[0.18em] text-slate-400">
+              <tr>
+                {["สินค้า", "เบิก", "ขาย", "ควรเหลือ", "นับจริง", "ส่วนต่าง"].map((header) => (
+                  <th key={header} className="px-4 py-4 font-black">
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {overview?.sessionSummary.map((item) => (
+                <tr
+                  key={item.sku_code || item.name}
+                  className="border-t border-white/[0.05] text-base"
+                >
+                  <td className="px-4 py-4">
+                    <p className="font-black text-white">{item.name}</p>
+                    <p className="mt-1 text-sm text-slate-400">{item.sku_code}</p>
+                  </td>
+                  <td className="px-4 py-4 font-mono text-cyan-300">
+                    {item.withdrawn.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-amber-300">
+                    {item.sold.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-white">
+                    {item.expected.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-emerald-300">
+                    {item.counted.toLocaleString()}
+                  </td>
+                  <td className={`px-4 py-4 font-mono font-black ${item.diff >= 0 ? "text-violet-300" : "text-rose-300"}`}>
+                    {item.diff > 0 ? "+" : ""}
+                    {item.diff.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -669,11 +904,15 @@ export function StockWorkspace({ mode }: StockWorkspaceProps) {
             (item) => item?.storefrontBalance || 0,
             "หน้าร้านคงเหลือ",
             "เบิกไปหน้าร้าน",
+            {
+              label: "ในคลัง",
+              selector: (item) => item?.warehouseBalance || 0,
+            },
           )}
           {renderMovements(storefrontMovements, "ยังไม่มีรายการเบิกจากคลังร้านไปหน้าร้านในรอบนี้")}
         </div>
       ) : mode === "comparison" ? (
-        renderComparison()
+        renderSessionSummaryComparison()
       ) : (
         renderCloseout()
       )}

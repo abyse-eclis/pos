@@ -90,10 +90,21 @@ export interface StockOverviewItem {
   storefrontDiff: number;
 }
 
+export interface StockSessionSummaryItem {
+  sku_code: string;
+  name: string;
+  withdrawn: number;
+  sold: number;
+  expected: number;
+  counted: number;
+  diff: number;
+}
+
 export interface StockOverviewData {
   session: StockSession | null;
   generatedAt: string;
   items: StockOverviewItem[];
+  sessionSummary: StockSessionSummaryItem[];
   totals: {
     warehouseOpening: number;
     receivedToWarehouse: number;
@@ -106,6 +117,13 @@ export interface StockOverviewData {
     storefrontExpected: number;
     storefrontActual: number;
     storefrontDiff: number;
+  };
+  sessionSummaryTotals: {
+    totalWithdrawn: number;
+    totalSold: number;
+    totalExpected: number;
+    totalCounted: number;
+    totalDiff: number;
   };
   movements: StockMovement[];
 }

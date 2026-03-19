@@ -71,7 +71,7 @@ export async function GET() {
         const consumableId = (row.get("ตัดวัสดุ") || row.get("consumable_id") || "").trim();
         const packsPerCrate = Number(row.get("จำนวนแพ็คต่อ ลัง") || row.get("จำนวนแพ็คต่อลัง") || row.get("packs_per_crate")) || 0;
         const piecesPerPack = Number(row.get("จำนวนชิ้นต่อแพ็ค") || row.get("จำนวนต่อหน่วยใหญ่") || row.get("pieces_per_pack")) || 0;
-        const isInventory = parseBoolean(row.get("is_inventory"), false);
+        const isInventory = parseBoolean(row.get("is_inventory"), true);
         const isActive = parseBoolean(row.get("is_active"), true);
 
         return {

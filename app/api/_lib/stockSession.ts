@@ -1,6 +1,8 @@
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import {
   enumerateDateStrings,
+  getRowValue,
+  getSheetByAnyTitle,
   getTodayDateStr,
 } from "./googleSheets";
 
@@ -63,7 +65,7 @@ export async function getOrCreateSheet(
   title: string,
   headers: string[],
 ) {
-  let sheet = doc.sheetsByTitle[title];
+  let sheet = getSheetByAnyTitle(doc, title);
   if (!sheet) {
     sheet = await doc.addSheet({
       title,
@@ -87,7 +89,7 @@ export function rowToSession(row: any): StockSessionRecord {
     label: row.get("label") || "",
     started_at: row.get("started_at") || "",
     closed_at: row.get("closed_at") || "",
-    status: ((row.get("status") || "open") as "open" | "closed"),
+    status: (row.get("status") || "open") as "open" | "closed",
   };
 }
 
@@ -99,7 +101,8 @@ export function rowToMovement(row: any): StockMovementRecord {
     date: row.get("date") || "",
     sku_code: row.get("sku_code") || "",
     name: row.get("name") || "",
-    movement_type: (row.get("movement_type") || "receive_to_warehouse") as StockMovementType,
+    movement_type: (row.get("movement_type") ||
+      "receive_to_warehouse") as StockMovementType,
     qty_piece: Number(row.get("qty_piece")) || 0,
     note: row.get("note") || "",
   };
@@ -108,13 +111,17 @@ export function rowToMovement(row: any): StockMovementRecord {
 export async function getAllSessions(doc: GoogleSpreadsheet) {
   const sheet = await getSessionSheet(doc);
   const rows = await sheet.getRows();
-  return rows.map(rowToSession).sort((a, b) => b.started_at.localeCompare(a.started_at));
+  return rows
+    .map(rowToSession)
+    .sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
 
 export async function getAllMovements(doc: GoogleSpreadsheet) {
   const sheet = await getMovementSheet(doc);
   const rows = await sheet.getRows();
-  return rows.map(rowToMovement).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return rows
+    .map(rowToMovement)
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 export async function getOpenSession(doc: GoogleSpreadsheet) {
@@ -160,7 +167,8 @@ export async function getSessionStockSnapshot(
     if (!key) continue;
 
     const isBeforeSession =
-      movement.timestamp < sessionStart && movement.session_id !== session.session_id;
+      movement.timestamp < sessionStart &&
+      movement.session_id !== session.session_id;
     const isInSession = movement.session_id === session.session_id;
 
     if (!isBeforeSession && !isInSession) continue;
@@ -206,10 +214,10 @@ export async function getSalesTotalsForDates(
     const rows = await sheet.getRows();
 
     for (const row of rows) {
-      const sku = row.get("รหัสสินค้า") || "";
-      const name = row.get("ชื่อสินค้า") || "";
-      const qty = Number(row.get("จำนวน")) || 0;
-      const revenue = Number(row.get("ราคารวม")) || 0;
+      const sku = getRowValue(row, "รหัสสินค้า");
+      const name = getRowValue(row, "ชื่อสินค้า");
+      const qty = Number(getRowValue(row, "จำนวน")) || 0;
+      const revenue = Number(getRowValue(row, "ราคารวม")) || 0;
       const key = sku || name;
       if (!key) continue;
 

@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getSpreadsheet, getTodayDateStr } from "../_lib/googleSheets";
+import {
+  getRowValue,
+  getSheetByAnyTitle,
+  getSpreadsheet,
+  getTodayDateStr,
+} from "../_lib/googleSheets";
 import {
   getAllMovements,
   getAllSessions,
@@ -33,7 +38,11 @@ function emptyAccumulator(): Accumulator {
   };
 }
 
-function applyWarehouseBalance(acc: Accumulator, movement: StockMovementRecord, toSessionOpening: boolean) {
+function applyWarehouseBalance(
+  acc: Accumulator,
+  movement: StockMovementRecord,
+  toSessionOpening: boolean,
+) {
   const qty = movement.qty_piece;
   if (movement.movement_type === "receive_to_warehouse") {
     if (toSessionOpening) acc.warehouseBeforeSession += qty;
@@ -66,6 +75,7 @@ export async function GET(req: Request) {
         session: null,
         generatedAt: new Date().toISOString(),
         items: [],
+        sessionSummary: [],
         totals: {
           warehouseOpening: 0,
           receivedToWarehouse: 0,
@@ -78,6 +88,13 @@ export async function GET(req: Request) {
           storefrontExpected: 0,
           storefrontActual: 0,
           storefrontDiff: 0,
+        },
+        sessionSummaryTotals: {
+          totalWithdrawn: 0,
+          totalSold: 0,
+          totalExpected: 0,
+          totalCounted: 0,
+          totalDiff: 0,
         },
         movements: [],
       });
@@ -100,7 +117,8 @@ export async function GET(req: Request) {
       if (!key) continue;
       const acc = ensureSku(key);
       const isBeforeSession =
-        movement.timestamp < sessionStart && movement.session_id !== activeSession.session_id;
+        movement.timestamp < sessionStart &&
+        movement.session_id !== activeSession.session_id;
       if (isBeforeSession) {
         applyWarehouseBalance(acc, movement, true);
       }
@@ -122,25 +140,26 @@ export async function GET(req: Request) {
     }
 
     const sessionDates = getSessionDateRange(activeSession);
-    const { soldBySku, soldTodayBySku } = await getSalesTotalsForDates(doc, sessionDates);
+    const { soldBySku, soldTodayBySku } = await getSalesTotalsForDates(
+      doc,
+      sessionDates,
+    );
 
-    const productsSheet = doc.sheetsByTitle["สินค้า"];
+    const productsSheet = getSheetByAnyTitle(doc, "สินค้า");
     const productRows = productsSheet ? await productsSheet.getRows() : [];
     const productRecords = productRows
       .map((row) => {
-        const sku = row.get("รหัส SKU") || row.get("sku_code") || "";
-        const name = (row.get("ชื่อสินค้า") || row.get("name") || "").trim();
-        const isInventoryRaw = (row.get("is_inventory") || "").toString().trim().toUpperCase();
-        const isInventory =
-          isInventoryRaw === "TRUE" || isInventoryRaw === "1" || isInventoryRaw === "YES";
+        const sku = getRowValue(row, "รหัส SKU", "sku_code");
+        const name = String(
+          getRowValue(row, "ชื่อสินค้า", "name"),
+        ).trim();
         return {
           key: getKey(String(sku).trim(), name),
           sku_code: String(sku).trim(),
           name,
-          isInventory,
         };
       })
-      .filter((item) => item.key && item.isInventory);
+      .filter((item) => item.key);
 
     const items = productRecords
       .map((product) => {
@@ -157,7 +176,9 @@ export async function GET(req: Request) {
         const storefrontExpected = storefrontBalance;
         const storefrontActual = acc.storefrontCountLatest;
         const storefrontDiff =
-          acc.storefrontCountTimestamp ? storefrontActual - storefrontExpected : 0;
+          acc.storefrontCountTimestamp
+            ? storefrontActual - storefrontExpected
+            : 0;
 
         return {
           sku_code: product.sku_code || product.key,
@@ -219,12 +240,55 @@ export async function GET(req: Request) {
       },
     );
 
+    const sessionSummary = items
+      .map((item) => ({
+        sku_code: item.sku_code,
+        name: item.name,
+        withdrawn: item.movedToStorefront,
+        sold: item.soldInSession,
+        expected: item.storefrontExpected,
+        counted: item.storefrontActual,
+        diff: item.storefrontDiff,
+      }))
+      .filter(
+        (item) =>
+          item.withdrawn !== 0 ||
+          item.sold !== 0 ||
+          item.counted !== 0 ||
+          item.diff !== 0,
+      )
+      .sort((a, b) => {
+        const diffGap = Math.abs(b.diff) - Math.abs(a.diff);
+        if (diffGap !== 0) return diffGap;
+        return b.withdrawn - a.withdrawn;
+      });
+
+    const sessionSummaryTotals = sessionSummary.reduce(
+      (acc, item) => {
+        acc.totalWithdrawn += item.withdrawn;
+        acc.totalSold += item.sold;
+        acc.totalExpected += item.expected;
+        acc.totalCounted += item.counted;
+        acc.totalDiff += item.diff;
+        return acc;
+      },
+      {
+        totalWithdrawn: 0,
+        totalSold: 0,
+        totalExpected: 0,
+        totalCounted: 0,
+        totalDiff: 0,
+      },
+    );
+
     return NextResponse.json({
       success: true,
       session: activeSession,
       generatedAt: new Date().toISOString(),
       items,
+      sessionSummary,
       totals,
+      sessionSummaryTotals,
       movements: sessionMovements,
       today: getTodayDateStr(),
     });

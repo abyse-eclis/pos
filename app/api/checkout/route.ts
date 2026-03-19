@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
 import { getOpenSession, getSessionStockSnapshot } from "../_lib/stockSession";
+import { getRowValue, getSheetByAnyTitle } from "../_lib/googleSheets";
 
 // header row for every daily sheet
 const HEADERS = [
@@ -31,11 +32,9 @@ async function getDailySheet(doc: GoogleSpreadsheet) {
   const yyyy = th.getUTCFullYear();
   const sheetTitle = `${dd}-${mm}-${yyyy}`;
 
-  // try to find existing sheet
   let sheet = doc.sheetsByTitle[sheetTitle];
 
   if (!sheet) {
-    // create new sheet with headers
     sheet = await doc.addSheet({
       title: sheetTitle,
       headerValues: HEADERS,
@@ -58,7 +57,7 @@ function billId() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { items, total, received, change, staff, paymentMethod } = body;
+    const { items, total, received, change, paymentMethod } = body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
@@ -66,7 +65,6 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-
 
     const serviceAccountAuth = new JWT({
       email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -83,34 +81,37 @@ export async function POST(req: Request) {
     const openSession = await getOpenSession(doc);
     if (openSession) {
       const stockSnapshot = await getSessionStockSnapshot(doc, openSession);
-      const productSheet = doc.sheetsByTitle["สินค้า"];
+      const productSheet = getSheetByAnyTitle(doc, "สินค้า");
       const productRows = productSheet ? await productSheet.getRows() : [];
       const inventoryKeys = new Set<string>();
 
       for (const row of productRows) {
-        const sku = String(row.get("รหัส SKU") || row.get("sku_code") || "").trim();
-        const name = String(row.get("ชื่อสินค้า") || row.get("name") || "").trim();
-        const isInventoryRaw = String(row.get("is_inventory") || "").trim().toUpperCase();
-        const isInventory =
-          isInventoryRaw === "TRUE" || isInventoryRaw === "1" || isInventoryRaw === "YES";
-
-        if (isInventory) {
-          if (sku) inventoryKeys.add(sku);
-          else if (name) inventoryKeys.add(name);
-        }
+        const sku = String(
+          getRowValue(row, "รหัส SKU", "sku_code"),
+        ).trim();
+        const name = String(
+          getRowValue(row, "ชื่อสินค้า", "name"),
+        ).trim();
+        if (sku) inventoryKeys.add(sku);
+        else if (name) inventoryKeys.add(name);
       }
 
       const requestedQtyByKey = new Map<string, number>();
       for (const item of items) {
         const key = String(item.sku_code || item.name || "").trim();
         if (!key || !inventoryKeys.has(key)) continue;
-        requestedQtyByKey.set(key, (requestedQtyByKey.get(key) || 0) + (Number(item.qty) || 0));
+        requestedQtyByKey.set(
+          key,
+          (requestedQtyByKey.get(key) || 0) + (Number(item.qty) || 0),
+        );
       }
 
       for (const [key, requestedQty] of requestedQtyByKey.entries()) {
         const availableQty = stockSnapshot.get(key)?.storefrontBalance || 0;
         if (requestedQty > availableQty) {
-          const matchedItem = items.find((item: any) => (item.sku_code || item.name) === key);
+          const matchedItem = items.find(
+            (item: any) => (item.sku_code || item.name) === key,
+          );
           return NextResponse.json(
             {
               success: false,
@@ -125,12 +126,10 @@ export async function POST(req: Request) {
     const { sheet } = await getDailySheet(doc);
     const bill = billId();
 
-    // timestamp
     const now = new Date();
     const th = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-    const timeStr = th.toISOString().slice(11, 19); // HH:mm:ss
+    const timeStr = th.toISOString().slice(11, 19);
 
-    // build rows matching HEADERS
     const rows = items.map((item: any) => ({
       เวลา: timeStr,
       บิล: bill,
@@ -147,7 +146,6 @@ export async function POST(req: Request) {
 
     const addedRows = await sheet.addRows(rows);
 
-    // Color alternating bills
     try {
       if (addedRows.length > 0) {
         const firstAddedRowIndex = addedRows[0].rowNumber - 1;
@@ -155,7 +153,6 @@ export async function POST(req: Request) {
 
         let useGray = false;
         if (firstAddedRowIndex > 0) {
-          // Load the cell JUST ABOVE the first added row to check its color
           await sheet.loadCells({
             startRowIndex: firstAddedRowIndex - 1,
             endRowIndex: firstAddedRowIndex,
@@ -164,9 +161,13 @@ export async function POST(req: Request) {
           });
           const prevCell = sheet.getCell(firstAddedRowIndex - 1, 0);
           const prevColor = prevCell.userEnteredFormat?.backgroundColor;
-          
-          // If previous row is NOT gray (i.e. it's white or undefined), use gray for this bill
-          if (!prevColor || (prevColor.red === 1 && prevColor.green === 1 && prevColor.blue === 1)) {
+
+          if (
+            !prevColor ||
+            (prevColor.red === 1 &&
+              prevColor.green === 1 &&
+              prevColor.blue === 1)
+          ) {
             useGray = true;
           }
         }
